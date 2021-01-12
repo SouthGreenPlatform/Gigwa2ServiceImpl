@@ -48,6 +48,7 @@ import fr.cirad.mgdb.model.mongo.maintypes.GenotypingSample;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantData;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData.VariantRunDataId;
+import fr.cirad.mgdb.model.mongo.maintypes.VariantRunDataV2;
 import fr.cirad.mgdb.model.mongo.subtypes.AbstractVariantData;
 import fr.cirad.mgdb.model.mongo.subtypes.ReferencePosition;
 import fr.cirad.mgdb.model.mongo.subtypes.SampleGenotype;
@@ -68,6 +69,7 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 	/** The mongo template. */
 	private MongoTemplate mongoTemplate;
 
+	private boolean fV2Model = false;
 
 	/** The genotyping project. */
 	private GenotypingProject genotypingProject;
@@ -221,6 +223,7 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
         int projId = Integer.parseInt(info[1]);
 
 		this.mongoTemplate = MongoTemplateManager.get(sModule);
+		this.fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
 
 		this.genotypingProject = mongoTemplate.findById(Integer.valueOf(projId), GenotypingProject.class);
 		this.geneNames = gsvr.getGeneName();
@@ -481,9 +484,9 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 				List<GenotypingSample> individualSamples = individualToSampleListMap[g].get(selectedIndividuals[g].get(j));
 				for (int k=0; k<individualSamples.size(); k++) {	// this loop is executed only once for single-run projects
 					GenotypingSample individualSample = individualSamples.get(k);
-					String pathToGT = individualSample.getId() + "." + SampleGenotype.FIELDNAME_GENOTYPECODE;
-					Object fullPathToGT = "$" + VariantRunData.FIELDNAME_SAMPLEGENOTYPES + "." + pathToGT;
-					group.put(pathToGT.replaceAll("\\.", "¤"), new BasicDBObject("$addToSet", fullPathToGT));
+					String pathToGT = fV2Model ? (VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + individualSample.getId() + "." + SampleGenotype.FIELDNAME_GENOTYPECODE) : VariantRunData.FIELDNAME_GENOTYPES + "." + individualSample.getId() + ".";
+//					Object fullPathToGT = "$" + VariantRunData.FIELDNAME_SAMPLEGENOTYPES + "." + pathToGT;
+					group.put(pathToGT.replaceAll("\\.", "¤"), new BasicDBObject("$addToSet", "$" + pathToGT));
 					individualSampleGenotypeList.add("$" + pathToGT.replaceAll("\\.", "¤"));
 	        		
 					if (annotationFieldThresholds[g] != null)
@@ -492,11 +495,12 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 							if (threshold == 0)
 								continue;
 
-							String pathToAnnotationField = individualSample.getId() + "." + SampleGenotype.SECTION_ADDITIONAL_INFO + "." + annotation;
-							group.put(pathToAnnotationField.replaceAll("\\.", "¤"), new BasicDBObject("$addToSet", "$" + VariantRunData.FIELDNAME_SAMPLEGENOTYPES + "." + pathToAnnotationField));
+							String pathToAnnotationField = fV2Model ? (VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + individualSample.getId() + "." + SampleGenotype.SECTION_ADDITIONAL_INFO + "." + annotation) : VariantRunData.FIELDNAME_METADATA + "." + annotation + "." + individualSample.getId();
+//							String pathToAnnotationField = individualSample.getId() + "." + SampleGenotype.SECTION_ADDITIONAL_INFO + "." + annotation;
+							group.put(pathToAnnotationField.replaceAll("\\.", "¤"), new BasicDBObject("$addToSet", "$" + pathToAnnotationField));
 							
 							BasicDBList qualTooLowList = new BasicDBList();
-							qualTooLowList.add(fGotIndividualsWithMultipleSamples ? new BasicDBObject("$arrayElemAt", new Object[] {"$" + pathToAnnotationField.replaceAll("\\.", "¤"), 0}) : ("$" + VariantRunData.FIELDNAME_SAMPLEGENOTYPES + "." + pathToAnnotationField));
+							qualTooLowList.add(fGotIndividualsWithMultipleSamples ? new BasicDBObject("$arrayElemAt", new Object[] {"$" + pathToAnnotationField.replaceAll("\\.", "¤"), 0}) : ("$" + pathToAnnotationField));
 							qualTooLowList.add(threshold);
 		
 							BasicDBObject qualTooLow = new BasicDBObject("$lt", qualTooLowList);
@@ -506,11 +510,11 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 			        if (k > 0)
 						continue;	// the remaining code in this loop must only be executed once
 			        
-			        if (conditionsWhereAnnotationFieldValueIsTooLow.size() > 0)
-			        	fullPathToGT = new BasicDBObject("$cond", new Object[] {new BasicDBObject("$or", conditionsWhereAnnotationFieldValueIsTooLow), null, fullPathToGT});
+//			        if (conditionsWhereAnnotationFieldValueIsTooLow.size() > 0)
+//			        	fullPathToGT = new BasicDBObject("$cond", new Object[] {new BasicDBObject("$or", conditionsWhereAnnotationFieldValueIsTooLow), null, fullPathToGT});
 	                
 	                if (fNeedGtArray && !fGotIndividualsWithMultipleSamples)
-	                	currentGroupGtArray.add(fullPathToGT);
+	                	currentGroupGtArray.add(conditionsWhereAnnotationFieldValueIsTooLow.size() > 0 ? new BasicDBObject("$cond", new Object[] {new BasicDBObject("$or", conditionsWhereAnnotationFieldValueIsTooLow), null, "$" + pathToGT}) : "$" + pathToGT);
 		    	}
 				if (fNeedGtArray && fGotIndividualsWithMultipleSamples) {	// we're in the case of a multi-run project
 					BasicDBObject union = new BasicDBObject("input", new BasicDBObject("$setUnion", individualSampleGenotypeList));
@@ -725,10 +729,10 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 		if (finalMatchList.size() > 0)
 			 pipeline.add(new BasicDBObject("$match", new BasicDBObject("$and", finalMatchList)));
 
-//        if (nNextCallCount == 1) {
-//        	try { System.out.println(new ObjectMapper().writeValueAsString(pipeline)); }
-//        	catch (Exception ignored) {}
-//        }
+        if (nNextCallCount == 1) {
+        	try { LOG.debug((fV2Model ? "V2" : "V3") + " model query: " + new ObjectMapper().writeValueAsString(pipeline)); }
+        	catch (Exception ignored) {}
+        }
         return pipeline;
     }
 		
