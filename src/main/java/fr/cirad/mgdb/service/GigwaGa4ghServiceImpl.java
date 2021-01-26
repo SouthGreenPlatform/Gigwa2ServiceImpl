@@ -134,6 +134,7 @@ import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData.VariantRunDataId;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunDataV2;
 import fr.cirad.mgdb.model.mongo.subtypes.AbstractVariantData;
+import fr.cirad.mgdb.model.mongo.subtypes.AbstractVariantDataV2;
 import fr.cirad.mgdb.model.mongo.subtypes.ReferencePosition;
 import fr.cirad.mgdb.model.mongo.subtypes.SampleGenotype;
 import fr.cirad.mgdb.model.mongodao.MgdbDao;
@@ -503,6 +504,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         String queryKey = getQueryKey(gsvr);
 
         final MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
+        boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
         MongoCollection<Document> cachedCountCollection = mongoTemplate.getCollection(mongoTemplate.getCollectionName(CachedCount.class));
 //			cachedCountCollection.drop();
         MongoCursor<Document> countCursor = cachedCountCollection.find(new BasicDBObject("_id", queryKey)).iterator();
@@ -521,16 +523,31 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             
             List<String> alleleCountList = gsvr.getAlleleCount().length() == 0 ? null : Arrays.asList(gsvr.getAlleleCount().split(";"));
 
-            GenotypingProject genotypingProject = mongoTemplate.findById(projId, GenotypingProject.class);
-            if (genotypingProject.getAlleleCounts().size() != 1 || genotypingProject.getAlleleCounts().iterator().next() != 2) {	// Project does not only have bi-allelic data: make sure we can apply MAF filter on selection
-                boolean fExactlyOneNumberOfAllelesSelected = alleleCountList != null && alleleCountList.size() == 1;
-                boolean fBiAllelicSelected = fExactlyOneNumberOfAllelesSelected && "2".equals(alleleCountList.get(0));
-                boolean fMafRequested = (gsvr.getMaxmaf() != null && gsvr.getMaxmaf() < 50) || (gsvr.getMinmaf() != null && gsvr.getMinmaf() > 0);
-                if (fMafRequested && !fBiAllelicSelected) {
-                    progress.setError("MAF is only supported on biallelic data!");
-                    countCursor.close();
-                    return 0l;
-                }
+            if (fV2Model) {
+	            GenotypingProjectV2 genotypingProject = mongoTemplate.findById(projId, GenotypingProjectV2.class);
+	            if (genotypingProject.getAlleleCounts().size() != 1 || genotypingProject.getAlleleCounts().iterator().next() != 2) {	// Project does not only have bi-allelic data: make sure we can apply MAF filter on selection
+	                boolean fExactlyOneNumberOfAllelesSelected = alleleCountList != null && alleleCountList.size() == 1;
+	                boolean fBiAllelicSelected = fExactlyOneNumberOfAllelesSelected && "2".equals(alleleCountList.get(0));
+	                boolean fMafRequested = (gsvr.getMaxmaf() != null && gsvr.getMaxmaf() < 50) || (gsvr.getMinmaf() != null && gsvr.getMinmaf() > 0);
+	                if (fMafRequested && !fBiAllelicSelected) {
+	                    progress.setError("MAF is only supported on biallelic data!");
+	                    countCursor.close();
+	                    return 0l;
+	                }
+	            }
+            }
+            else {
+	            GenotypingProject genotypingProject = mongoTemplate.findById(projId, GenotypingProject.class);
+	            if (genotypingProject.getAlleleCounts().size() != 1 || genotypingProject.getAlleleCounts().iterator().next() != 2) {	// Project does not only have bi-allelic data: make sure we can apply MAF filter on selection
+	                boolean fExactlyOneNumberOfAllelesSelected = alleleCountList != null && alleleCountList.size() == 1;
+	                boolean fBiAllelicSelected = fExactlyOneNumberOfAllelesSelected && "2".equals(alleleCountList.get(0));
+	                boolean fMafRequested = (gsvr.getMaxmaf() != null && gsvr.getMaxmaf() < 50) || (gsvr.getMinmaf() != null && gsvr.getMinmaf() > 0);
+	                if (fMafRequested && !fBiAllelicSelected) {
+	                    progress.setError("MAF is only supported on biallelic data!");
+	                    countCursor.close();
+	                    return 0l;
+	                }
+	            }
             }
 
             MongoCollection<Document> varColl = mongoTemplate.getCollection(mongoTemplate.getCollectionName(VariantData.class));
@@ -1779,11 +1796,14 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 	 * @return List<Variant>
 	 * @throws AvroRemoteException
 	 */
-	private List<Variant> getVariantListFromDBCursor(String module, int projId, MongoCursor<Document> cursor, Collection<GenotypingSample> samples, String sRun) throws AvroRemoteException
+	private List<Variant> getVariantListFromDBCursor(String module, int projId, MongoCursor<Document> cursor, Collection<GenotypingSample> samples, String sRun, int nAssemblyId) throws AvroRemoteException
 	{
 //    	long before = System.currentTimeMillis();
         LinkedHashMap<Comparable, Variant> varMap = new LinkedHashMap<>();
         LinkedHashMap<Comparable, String> typeMap = new LinkedHashMap<>();
+
+        MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
+        boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
 
         // parse the cursor to create all GAVariant 
         while (cursor.hasNext()) {
@@ -1791,11 +1811,14 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             Document obj = cursor.next();
             // save the Id of each variant in the cursor 
             String id = (String) obj.get("_id");
-            List<String> knownAlleles = ((List<String>) obj.get(VariantData.FIELDNAME_KNOWN_ALLELE_LIST));
+            List<String> knownAlleles = ((List<String>) obj.get(fV2Model ? AbstractVariantDataV2.FIELDNAME_KNOWN_ALLELE_LIST : AbstractVariantData.FIELDNAME_KNOWN_ALLELE_LIST));
 
-            Document rp = ((Document) obj.get(VariantData.FIELDNAME_REFERENCE_POSITION));
+            Document rp = ((Document) obj.get(fV2Model ? AbstractVariantDataV2.FIELDNAME_REFERENCE_POSITION : AbstractVariantData.FIELDNAME_REFERENCE_POSITION));
             if (rp == null)
             	throw new AvroRemoteException("Variant " + id.toString() + " has no reference position!");
+            
+            if (!fV2Model)
+            	rp = (Document) rp.get("" + nAssemblyId);
             
             Long start = (Long) rp.get(ReferencePosition.FIELDNAME_START_SITE);
             Long end = (Long) rp.get(ReferencePosition.FIELDNAME_END_SITE);
@@ -1817,8 +1840,6 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
            	varMap.put(id, variantBuilder.build());
         }
 
-        MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
-        boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
 
         // get genotypes for wanted individuals/callSets only 
 		final Map<Integer, String> sampleIdToIndividualMap = new HashMap<>();
@@ -1828,26 +1849,34 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 				Criteria.where("_id." + VariantRunDataId.FIELDNAME_VARIANT_ID).in(varMap.keySet()),
 				Criteria.where("_id." + VariantRunDataId.FIELDNAME_PROJECT_ID).is(projId)
 			));
-        ProjectionOperation projectOp = new ProjectionOperation();
-        for (GenotypingSample sample : samples)
-	        if (sRun == null || sample.getRun().equals(sRun)) {
-	        	if (fV2Model)
-	        		projectOp.andInclude(VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + sample.getId());
-	        	else {
-	        		projectOp.andInclude(VariantRunData.FIELDNAME_GENOTYPES + "." + sample.getId());
-	        		projectOp.andInclude(VariantRunData.FIELDNAME_METADATA + "." + sample.getId());
-	        	}
-	            sampleIdToIndividualMap.put(sample.getId(), sample.getIndividual());
-	        }
-        
+
         // get the VariantRunData records containing annotations
         Iterator runIterator;
         if (fV2Model) {
-            TypedAggregation<VariantRunDataV2> tAgg = new TypedAggregation<>(VariantRunDataV2.class, matchOp, projectOp);
+            TypedAggregation<VariantRunDataV2> tAgg = new TypedAggregation<>(VariantRunDataV2.class, matchOp);
+            if (samples.size() > 0) {
+            	ProjectionOperation projectOp = new ProjectionOperation();
+                for (GenotypingSample sample : samples)
+        	        if (sRun == null || sample.getRun().equals(sRun)) {
+       	        		projectOp.andInclude(VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + sample.getId());
+        	            sampleIdToIndividualMap.put(sample.getId(), sample.getIndividual());
+        	        }
+            	tAgg.getPipeline().add(projectOp);
+            }
             runIterator = mongoTemplate.aggregate(tAgg, VariantRunDataV2.class).iterator();
         }
         else {
-            TypedAggregation<VariantRunDataV2> tAgg = new TypedAggregation<>(VariantRunDataV2.class, matchOp, projectOp);
+            TypedAggregation<VariantRunData> tAgg = new TypedAggregation<>(VariantRunData.class, matchOp);
+            if (samples.size() > 0) {
+            	ProjectionOperation projectOp = new ProjectionOperation();
+                for (GenotypingSample sample : samples)
+        	        if (sRun == null || sample.getRun().equals(sRun)) {
+    	        		projectOp.andInclude(VariantRunData.FIELDNAME_GENOTYPES + "." + sample.getId());
+    	        		projectOp.andInclude(VariantRunData.FIELDNAME_METADATA + "." + sample.getId());
+        	            sampleIdToIndividualMap.put(sample.getId(), sample.getIndividual());
+        	        }
+            	tAgg.getPipeline().add(projectOp);
+            }
             runIterator = mongoTemplate.aggregate(tAgg, VariantRunData.class).iterator();
         }
 
@@ -2833,7 +2862,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 					samples = new ArrayList<>();
 				}
 
-				List<Variant> listVar = getVariantListFromDBCursor(module, Integer.parseInt(info[1]), cursor, samples, null);
+				List<Variant> listVar = getVariantListFromDBCursor(module, Integer.parseInt(info[1]), cursor, samples, null, gsvr.getAssemblyId());
 				String nextPageToken = null;
 
                 // if there is still more result after PageSize iterations
