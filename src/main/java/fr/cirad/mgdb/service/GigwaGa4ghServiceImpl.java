@@ -1186,8 +1186,8 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                 response.setContentType("application/zip");
                 response.setHeader("Content-disposition", "inline; filename=" + filename);
             }
-
-            GenotypingProject project = mongoTemplate.findById(projId, GenotypingProject.class);
+            
+            boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
 			Collection<GenotypingSample> samples1 = MgdbDao.getSamplesForProject(sModule, projId, selectedIndividualList1);
 			Collection<GenotypingSample> samples2 = MgdbDao.getSamplesForProject(sModule, projId, selectedIndividualList2);
 
@@ -1195,7 +1195,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             String sCitingText = appConfig.get("howToCite");
             if (sCitingText == null)
             	sCitingText = "Please cite Gigwa as follows:\nGuilhem Sempéré, Adrien Pétel, Mathieu Rouard, Julien Frouin, Yann Hueber, Fabien De Bellis, Pierre Larmande,\nGigwa v2—Extended and improved genotype investigator, GigaScience, Volume 8, Issue 5, May 2019, giz051, https://doi.org/10.1093/gigascience/giz051";
-            String projDesc = project.getDescription();
+            String projDesc = fV2Model ? mongoTemplate.findById(projId, GenotypingProjectV2.class).getDescription() : mongoTemplate.findById(projId, GenotypingProject.class).getDescription();
             if (projDesc != null && projDesc.contains("HOW TO CITE"))
             	sCitingText += (sCitingText.length() > 0 ? "\n\n" : "") + "Please cite project data as follows:\n" + projDesc.substring(projDesc.indexOf("HOW TO CITE") + 11).replaceAll("\n\n*", "\n").trim();
             if (sCitingText.length() > 0)
