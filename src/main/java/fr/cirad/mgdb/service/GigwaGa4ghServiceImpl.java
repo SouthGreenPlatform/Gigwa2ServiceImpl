@@ -20,7 +20,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
@@ -45,7 +44,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Scanner;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -55,7 +53,6 @@ import java.util.stream.Collectors;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
 
 import org.apache.avro.AvroRemoteException;
 import org.apache.commons.collections.CollectionUtils;
@@ -94,9 +91,6 @@ import org.ga4gh.models.VariantSetMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.aggregation.MatchOperation;
-import org.springframework.data.mongodb.core.aggregation.ProjectionOperation;
-import org.springframework.data.mongodb.core.aggregation.TypedAggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.core.Authentication;
@@ -121,8 +115,8 @@ import fr.cirad.mgdb.model.mongo.maintypes.Assembly;
 import fr.cirad.mgdb.model.mongo.maintypes.CachedCount;
 import fr.cirad.mgdb.model.mongo.maintypes.CustomIndividualMetadata;
 import fr.cirad.mgdb.model.mongo.maintypes.CustomIndividualMetadata.CustomIndividualMetadataId;
-import fr.cirad.mgdb.model.mongo.maintypes.DBVCFHeader.VcfHeaderId;
 import fr.cirad.mgdb.model.mongo.maintypes.DBVCFHeader;
+import fr.cirad.mgdb.model.mongo.maintypes.DBVCFHeader.VcfHeaderId;
 import fr.cirad.mgdb.model.mongo.maintypes.Database;
 import fr.cirad.mgdb.model.mongo.maintypes.GenotypingProject;
 import fr.cirad.mgdb.model.mongo.maintypes.GenotypingProjectV2;
@@ -130,6 +124,7 @@ import fr.cirad.mgdb.model.mongo.maintypes.GenotypingSample;
 import fr.cirad.mgdb.model.mongo.maintypes.Individual;
 import fr.cirad.mgdb.model.mongo.maintypes.Sequence;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantData;
+import fr.cirad.mgdb.model.mongo.maintypes.VariantDataV2;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData.VariantRunDataId;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunDataV2;
@@ -219,8 +214,10 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
     @Autowired private AppConfig appConfig;
     
     private HashSet<String> hostsNotSupportingMergeOperator = new HashSet<>();
+    
+    private ThreadLocal<Integer> assemblyId = new ThreadLocal<Integer>();
 
-    /**
+	/**
      * number format instance
      */
     static protected NumberFormat nf = NumberFormat.getInstance();
@@ -233,6 +230,15 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 //        annotationField.put(VariantRunData.SECTION_ADDITIONAL_INFO + "." + 1, "$" + VariantRunData.SECTION_ADDITIONAL_INFO);
     }
     
+    public ThreadLocal<Integer> getAssemblyId() {
+		return assemblyId;
+	}
+    
+	public void applyAssemblyId(HttpServletRequest request, String module) {
+        String assembly = request.getHeader("assembly");
+        assemblyId.set(assembly == null ? null : MongoTemplateManager.get(module).findOne(new Query(Criteria.where(Assembly.FIELDNAME_NAME).is(assembly)), Assembly.class).getId());
+	}
+	
 	public boolean isAggregationAllowedToUseDisk() {
 		if (appConfig==null) { //We are probably in unit test case
 			return true;
@@ -276,31 +282,10 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
     }
 
     @Override
-    public TreeSet<String> searchableAnnotationFields(String sModule, int projId) {
+    public TreeSet<String> getAnnotationFields(String sModule, int projId, boolean fOnlySearchableFields) {
     	TreeSet<String> result = new TreeSet<>();
         MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
-//        Query q = new Query(Criteria.where("_id." + VariantRunDataId.FIELDNAME_PROJECT_ID).is(projId));
-//        q.limit(3);
-//        q.fields().include(VariantRunData.FIELDNAME_SAMPLEGENOTYPES);
-//        Iterator<VariantRunData> it = mongoTemplate.find(q, VariantRunData.class).iterator();
-//        while (it.hasNext())
-//        {
-//        	VariantRunData vrd = it.next();
-//            Collection<SampleGenotype> spGTs = vrd.getSampleGenotypes().size() > 100 ? new ArrayList(vrd.getSampleGenotypes().values()).subList(0,  100) : vrd.getSampleGenotypes().values();
-//            for (HashMap<String, Object> annotationMap : spGTs.stream().map(sg -> sg.getAdditionalInfo()).collect(Collectors.toList()))
-//            	for (String aiKey : annotationMap.keySet())
-// 	               if (Number.class.isAssignableFrom(annotationMap.get(aiKey).getClass()))
-// 	                	result.add(aiKey);
-//        }
-    	/* This may be more efficient by looking at the VCF header instead */
-//        for (DBVCFHeader vcfHeader : mongoTemplate.find(new Query(Criteria.where("_id." + DBVCFHeader.VcfHeaderId.FIELDNAME_PROJECT).is(projId)), DBVCFHeader.class)) {
-//        	for (String key : vcfHeader.getmFormatMetaData().keySet()) {
-//        		VCFFormatHeaderLine vcfFormatHeaderLine = vcfHeader.getmFormatMetaData().get(key);
-//        		if (vcfFormatHeaderLine.getType().equals(VCFHeaderLineType.Integer) && vcfFormatHeaderLine.getCount() == 1)
-//        			result.add(key);
-//        	}
-//        }
-        
+
         // we can't use Spring queries here (leads to "Failed to instantiate htsjdk.variant.vcf.VCFInfoHeaderLine using constructor NO_CONSTRUCTOR with arguments")
 		MongoCollection<org.bson.Document> vcfHeaderColl = mongoTemplate.getCollection(MongoTemplateManager.getMongoCollectionName(DBVCFHeader.class));
 		Document vcfHeaderQuery = new Document("_id." + VcfHeaderId.FIELDNAME_PROJECT, projId);
@@ -311,7 +296,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 			DBVCFHeader vcfHeader = DBVCFHeader.fromDocument(headerCursor.next());
         	for (String key : vcfHeader.getmFormatMetaData().keySet()) {
         		VCFFormatHeaderLine vcfFormatHeaderLine = vcfHeader.getmFormatMetaData().get(key);
-        		if (vcfFormatHeaderLine.getType().equals(VCFHeaderLineType.Integer) && vcfFormatHeaderLine.getCountType() == VCFHeaderLineCount.INTEGER && vcfFormatHeaderLine.getCount() == 1)
+        		if (!fOnlySearchableFields || (vcfFormatHeaderLine.getType().equals(VCFHeaderLineType.Integer) && vcfFormatHeaderLine.getCountType() == VCFHeaderLineCount.INTEGER && vcfFormatHeaderLine.getCount() == 1))
         			result.add(key);
         	}
 		}
@@ -404,19 +389,22 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             variantFeatureFilterList.add(orSelectedVariantTypesList);
         }
 
+        boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+        String pathToRefPos = fV2Model ? VariantDataV2.FIELDNAME_REFERENCE_POSITION : (VariantData.FIELDNAME_REFERENCE_POSITION + "." + assemblyId.get());
+
         /* Step to match selected chromosomes */
-        if (selectedSequences != null && selectedSequences.size() > 0 && selectedSequences.size() != getProjectSequences(sModule, projId, gsvr.getAssemblyId()).size()) {
-            variantFeatureFilterList.add(new BasicDBObject(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE, new BasicDBObject("$in", selectedSequences)));
+        if (selectedSequences != null && selectedSequences.size() > 0 && selectedSequences.size() != getProjectSequences(sModule, projId).size()) {
+            variantFeatureFilterList.add(new BasicDBObject(pathToRefPos + "." + ReferencePosition.FIELDNAME_SEQUENCE, new BasicDBObject("$in", selectedSequences)));
         }
 
         /* Step to match variants that have a position included in the specified range */
         if (gsvr.getStart() != null || gsvr.getEnd() != null) {
             if (gsvr.getStart() != null && gsvr.getStart() != -1) {
-            	BasicDBObject firstPosStart = new BasicDBObject(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE, new BasicDBObject("$gte", gsvr.getStart()));
+            	BasicDBObject firstPosStart = new BasicDBObject(pathToRefPos + "." + ReferencePosition.FIELDNAME_START_SITE, new BasicDBObject("$gte", gsvr.getStart()));
                 variantFeatureFilterList.add(firstPosStart);
             }
             if (gsvr.getEnd() != null && gsvr.getEnd() != -1) {
-            	BasicDBObject lastPosStart = new BasicDBObject(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE, new BasicDBObject("$lte", gsvr.getEnd()));
+            	BasicDBObject lastPosStart = new BasicDBObject(pathToRefPos + "." + ReferencePosition.FIELDNAME_START_SITE, new BasicDBObject("$lte", gsvr.getEnd()));
                 variantFeatureFilterList.add(lastPosStart);
             }
         }
@@ -465,11 +453,11 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
        	q.addCriteria(Criteria.where("_id").is(projId));
         GenotypingProject proj = mongoTemplate.findOne(q, GenotypingProject.class);
         
-    	int nSelectedSeqCount = gsvr.getReferenceName() == null || gsvr.getReferenceName().length() == 0 ? proj.getSequences(gsvr.getAssemblyId()).size() : gsvr.getReferenceName().split(";").length;
+    	int nSelectedSeqCount = gsvr.getReferenceName() == null || gsvr.getReferenceName().length() == 0 ? proj.getSequences(assemblyId.get()).size() : gsvr.getReferenceName().split(";").length;
     	if (nSelectedSeqCount == 1)
     		return null;	// we can't expect user to select less than a single sequence
 
-    	int nAvgVariantsPerSeq = (int) (mongoTemplate.count(new Query(), VariantData.class) / Math.max(1, proj.getSequences(gsvr.getAssemblyId()).size()));
+    	int nAvgVariantsPerSeq = (int) (mongoTemplate.count(new Query(), VariantData.class) / Math.max(1, proj.getSequences(assemblyId.get()).size()));
     	BigInteger maxSeqCount = BigInteger.valueOf(1000000000).multiply(BigInteger.valueOf(nMaxBillionGenotypesInvolved)).divide(BigInteger.valueOf(nAvgVariantsPerSeq).multiply(BigInteger.valueOf(nIndCount)));
     	int nMaxSeqCount = Math.max(1, maxSeqCount.intValue());
 
@@ -504,7 +492,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         String queryKey = getQueryKey(gsvr);
 
         final MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
-        boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
+        boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
         MongoCollection<Document> cachedCountCollection = mongoTemplate.getCollection(mongoTemplate.getCollectionName(CachedCount.class));
 //			cachedCountCollection.drop();
         MongoCursor<Document> countCursor = cachedCountCollection.find(new BasicDBObject("_id", queryKey)).iterator();
@@ -785,7 +773,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         String sModule = info[0];
 
         MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
-        boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
+        boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
 
         MongoCollection<Document> variantColl = mongoTemplate.getCollection(mongoTemplate.getCollectionName(VariantData.class));
         MongoCollection<Document> tempVarColl = getTemporaryVariantCollection(sModule, token, false);
@@ -797,8 +785,8 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         	iterable.sort(new BasicDBObject(gsvr.getSortBy(), Integer.valueOf("DESC".equalsIgnoreCase(gsvr.getSortDir()) ? -1 : 1)));
         else
         {
-        	Document sortObj = new Document(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (!fV2Model ? gsvr.getAssemblyId() + "." : "") + ReferencePosition.FIELDNAME_SEQUENCE, 1);
-        	sortObj.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (!fV2Model ? gsvr.getAssemblyId() + "." : "") + ReferencePosition.FIELDNAME_START_SITE, 1);
+        	Document sortObj = new Document(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (!fV2Model ? assemblyId.get() + "." : "") + ReferencePosition.FIELDNAME_SEQUENCE, 1);
+        	sortObj.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (!fV2Model ? assemblyId.get() + "." : "") + ReferencePosition.FIELDNAME_START_SITE, 1);
         	iterable.sort(sortObj);
         }
         // skip the results we don't want           
@@ -1223,11 +1211,11 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                             try {
                                 progress.addStep("Reading and re-organizing genotypes"); // initial step will consist in organizing genotypes by individual rather than by marker
                                 progress.moveToNextStep();	// done with identifying variants
-                				Map<String, File> exportFiles = individualOrientedExportHandler.createExportFiles(sModule, gsver.getAssemblyId(), usedVarColl, variantQuery, samples1, samples2, processId, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, progress);
+                				Map<String, File> exportFiles = individualOrientedExportHandler.createExportFiles(sModule, assemblyId.get(), usedVarColl, variantQuery, samples1, samples2, processId, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, progress);
                 				for (String step : individualOrientedExportHandler.getStepList())
                                     progress.addStep(step);
                                 progress.moveToNextStep();
-								individualOrientedExportHandler.exportData(finalOS, sModule, gsver.getAssemblyId(), exportFiles.values(), true, progress, usedVarColl, variantQuery, null, readyToExportFiles);
+								individualOrientedExportHandler.exportData(finalOS, sModule, assemblyId.get(), exportFiles.values(), true, progress, usedVarColl, variantQuery, null, readyToExportFiles);
 					            if (!progress.isAborted()) {
 					                LOG.info("doVariantExport took " + (System.currentTimeMillis() - before) / 1000d + "s to process " + count + " variants and " + CollectionUtils.union(selectedIndividualList1, selectedIndividualList2).size() + " individuals");
 					                progress.markAsComplete();
@@ -1273,7 +1261,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                 Thread exportThread = new Thread() {
                 	public void run() {
                         try {
-                        	markerOrientedExportHandler.exportData(finalOS, sModule, gsver.getAssemblyId(), samples1, samples2, progress, usedVarColl, variantQuery, null, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, readyToExportFiles);
+                        	markerOrientedExportHandler.exportData(finalOS, sModule, assemblyId.get(), samples1, samples2, progress, usedVarColl, variantQuery, null, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, readyToExportFiles);
                             if (!progress.isAborted()) {
                                 LOG.info("doVariantExport took " + (System.currentTimeMillis() - before) / 1000d + "s to process " + count + " variants and " + CollectionUtils.union(selectedIndividualList1, selectedIndividualList2).size() + " individuals");
                                 progress.markAsComplete();
@@ -1451,16 +1439,18 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         String sModule = info[0];
         
 		final MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
+		boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+		String pathToRefPos = fV2Model ? VariantDataV2.FIELDNAME_REFERENCE_POSITION : (VariantData.FIELDNAME_REFERENCE_POSITION + "." + assemblyId.get());
 		
 		BasicDBList matchAndList = new BasicDBList();
-		matchAndList.add(new BasicDBObject(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE, gsvdr.getDisplayedSequence()));
+		matchAndList.add(new BasicDBObject(pathToRefPos + "." + ReferencePosition.FIELDNAME_SEQUENCE, gsvdr.getDisplayedSequence()));
 		if (gsvdr.getDisplayedVariantType() != null)
-			matchAndList.add(new BasicDBObject(VariantData.FIELDNAME_TYPE, gsvdr.getDisplayedVariantType()));
+			matchAndList.add(new BasicDBObject(fV2Model ? VariantDataV2.FIELDNAME_TYPE : VariantData.FIELDNAME_TYPE, gsvdr.getDisplayedVariantType()));
 		BasicDBObject match = new BasicDBObject("$match", new BasicDBObject("$and", matchAndList));
 
 		BasicDBObject groupFields = new BasicDBObject("_id", null);
-		groupFields.put("min", new BasicDBObject("$min", "$" + (VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE)));
-		groupFields.put("max", new BasicDBObject("$max", "$" + (VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE)));
+		groupFields.put("min", new BasicDBObject("$min", "$" + (pathToRefPos + "." + ReferencePosition.FIELDNAME_START_SITE)));
+		groupFields.put("max", new BasicDBObject("$max", "$" + (pathToRefPos + "." + ReferencePosition.FIELDNAME_START_SITE)));
 		BasicDBObject group = new BasicDBObject("$group", groupFields);
 
 		List<BasicDBObject> pipeline = new ArrayList<BasicDBObject>();
@@ -1514,14 +1504,16 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 		final ArrayList<Thread> threadsToWaitFor = new ArrayList<Thread>();
 		final long rangeMin = gdr.getDisplayedRangeMin();
 		final ProgressIndicator finalProgress = progress;
-
+		
+		boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+		String pathToRefPos = fV2Model ? VariantDataV2.FIELDNAME_REFERENCE_POSITION : (VariantData.FIELDNAME_REFERENCE_POSITION + "." + assemblyId.get());
 		for (int i=0; i<gdr.getDisplayedRangeIntervalCount(); i++)
 		{
 			BasicDBList queryList = new BasicDBList();
-			queryList.add(new BasicDBObject(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE, gdr.getDisplayedSequence()));
+			queryList.add(new BasicDBObject(pathToRefPos + "." + ReferencePosition.FIELDNAME_SEQUENCE, gdr.getDisplayedSequence()));
 			if (gdr.getDisplayedVariantType() != null)
-				queryList.add(new BasicDBObject(VariantData.FIELDNAME_TYPE, gdr.getDisplayedVariantType()));
-			String startSitePath = VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE;
+				queryList.add(new BasicDBObject(fV2Model ? VariantDataV2.FIELDNAME_TYPE : VariantData.FIELDNAME_TYPE, gdr.getDisplayedVariantType()));
+			String startSitePath = pathToRefPos + "." + ReferencePosition.FIELDNAME_START_SITE;
 			queryList.add(new BasicDBObject(startSitePath, new BasicDBObject("$gte", gdr.getDisplayedRangeMin() + (i*intervalSize))));
 			queryList.add(new BasicDBObject(startSitePath, new BasicDBObject(i < gdr.getDisplayedRangeIntervalCount() - 1 ? "$lt" : "$lte", i < gdr.getDisplayedRangeIntervalCount() - 1 ? gdr.getDisplayedRangeMin() + ((i+1)*intervalSize) : gdr.getDisplayedRangeMax())));
 			if (nTempVarCount == 0 && !variantQueryDBList.isEmpty())
@@ -1574,7 +1566,6 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 		ProgressIndicator.registerProgressIndicator(progress);
 
 		final MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
-		boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
         final BasicDBList variantQueryDBList = (BasicDBList) buildVariantDataQuery(gvfpr/*, getSequenceIDsBeingFilteredOn(gvfpr.getRequest().getSession(), sModule)*/);
 
 		MongoCollection<Document> tmpVarColl = getTemporaryVariantCollection(sModule, tokenManager.readToken(gvfpr.getRequest()), false);
@@ -1607,13 +1598,16 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 			individualIndexToSampleListMap.put(k, sampleIndexes);
 		}
 		
+		boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+		String pathToRefPos = fV2Model ? VariantDataV2.FIELDNAME_REFERENCE_POSITION : (VariantData.FIELDNAME_REFERENCE_POSITION + "." + assemblyId.get());
+		
 		for (int i=0; i<gvfpr.getDisplayedRangeIntervalCount(); i++)
 		{
 			List<Criteria> crits = new ArrayList<Criteria>();
-			crits.add(Criteria.where(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE).is(gvfpr.getDisplayedSequence()));
+			crits.add(Criteria.where(pathToRefPos + "." + ReferencePosition.FIELDNAME_SEQUENCE).is(gvfpr.getDisplayedSequence()));
 			if (gvfpr.getDisplayedVariantType() != null)
 				crits.add(Criteria.where(VariantData.FIELDNAME_TYPE).is(gvfpr.getDisplayedVariantType()));
-			String startSitePath = VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE;
+			String startSitePath = pathToRefPos + "." + ReferencePosition.FIELDNAME_START_SITE;
 			crits.add(Criteria.where(startSitePath).gte(gvfpr.getDisplayedRangeMin() + (i*intervalSize)));
 			if (i < gvfpr.getDisplayedRangeIntervalCount() - 1)
 				crits.add(Criteria.where(startSitePath).lt(gvfpr.getDisplayedRangeMin() + ((i+1)*intervalSize)));
@@ -1695,10 +1689,10 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 	}
 
     @Override
-    public List<String> getProjectSequences(String sModule, int projId, int assemblyId) {
+    public List<String> getProjectSequences(String sModule, int projId) {
         MongoTemplate mongoTemplate = MongoTemplateManager.get(sModule);
-        GenotypingProject proj = mongoTemplate.findById(projId, GenotypingProject.class);
-        return new ArrayList<String>(proj.getSequences(assemblyId));
+        Collection<String> seqs = assemblyId.get() != null && assemblyId.get() >= 0 ? mongoTemplate.findById(projId, GenotypingProject.class).getSequences(assemblyId.get()) : mongoTemplate.findById(projId, GenotypingProjectV2.class).getSequences();
+        return new ArrayList<String>(seqs);
     }
 
     /**
@@ -1796,18 +1790,20 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 	 * @return List<Variant>
 	 * @throws AvroRemoteException
 	 */
-	private List<Variant> getVariantListFromDBCursor(String module, int projId, MongoCursor<Document> cursor, Collection<GenotypingSample> samples, String sRun, int nAssemblyId) throws AvroRemoteException
+	private List<Variant> getVariantListFromDBCursor(String module, int projId, MongoCursor<Document> cursor, Collection<GenotypingSample> samples, String sRun) throws AvroRemoteException
 	{
 //    	long before = System.currentTimeMillis();
         LinkedHashMap<Comparable, Variant> varMap = new LinkedHashMap<>();
         LinkedHashMap<Comparable, String> typeMap = new LinkedHashMap<>();
 
         MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
-        boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
+        boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+        Class targetClass = fV2Model ? VariantRunDataV2.class : VariantRunData.class;
+        Integer nAssemblyId = assemblyId.get();
+    	TreeSet<String> annotationFieldsToProject = fV2Model ? null : getAnnotationFields(module, projId, false);
 
         // parse the cursor to create all GAVariant 
         while (cursor.hasNext()) {
-
             Document obj = cursor.next();
             // save the Id of each variant in the cursor 
             String id = (String) obj.get("_id");
@@ -1817,8 +1813,18 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             if (rp == null)
             	throw new AvroRemoteException("Variant " + id.toString() + " has no reference position!");
             
-            if (!fV2Model)
+            if (!fV2Model) {            	
+            	if (nAssemblyId == null || nAssemblyId < 0) {
+            		if (rp.size() >= 1) {
+	            		nAssemblyId = Integer.valueOf(rp.keySet().iterator().next());
+	            		if (rp.size() == 1)
+	            			LOG.info("Used unique found assembly because unspecified");
+	            		else
+	            			LOG.warn("Used first found assembly because unspecified");
+            		}
+            	}
             	rp = (Document) rp.get("" + nAssemblyId);
+            }
             
             Long start = (Long) rp.get(ReferencePosition.FIELDNAME_START_SITE);
             Long end = (Long) rp.get(ReferencePosition.FIELDNAME_END_SITE);
@@ -1840,46 +1846,29 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
            	varMap.put(id, variantBuilder.build());
         }
 
-
-        // get genotypes for wanted individuals/callSets only 
 		final Map<Integer, String> sampleIdToIndividualMap = new HashMap<>();
         HashSet<String> variantsForWhichAnnotationWasRetrieved = new HashSet<>();
         
-        MatchOperation matchOp = new MatchOperation(new Criteria().andOperator(
-				Criteria.where("_id." + VariantRunDataId.FIELDNAME_VARIANT_ID).in(varMap.keySet()),
-				Criteria.where("_id." + VariantRunDataId.FIELDNAME_PROJECT_ID).is(projId)
-			));
-
         // get the VariantRunData records containing annotations
-        Iterator runIterator;
-        if (fV2Model) {
-            TypedAggregation<VariantRunDataV2> tAgg = new TypedAggregation<>(VariantRunDataV2.class, matchOp);
-            if (samples.size() > 0) {
-            	ProjectionOperation projectOp = new ProjectionOperation();
-                for (GenotypingSample sample : samples)
-        	        if (sRun == null || sample.getRun().equals(sRun)) {
-       	        		projectOp.andInclude(VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + sample.getId());
-        	            sampleIdToIndividualMap.put(sample.getId(), sample.getIndividual());
-        	        }
-            	tAgg.getPipeline().add(projectOp);
-            }
-            runIterator = mongoTemplate.aggregate(tAgg, VariantRunDataV2.class).iterator();
-        }
-        else {
-            TypedAggregation<VariantRunData> tAgg = new TypedAggregation<>(VariantRunData.class, matchOp);
-            if (samples.size() > 0) {
-            	ProjectionOperation projectOp = new ProjectionOperation();
-                for (GenotypingSample sample : samples)
-        	        if (sRun == null || sample.getRun().equals(sRun)) {
-    	        		projectOp.andInclude(VariantRunData.FIELDNAME_GENOTYPES + "." + sample.getId());
-    	        		projectOp.andInclude(VariantRunData.FIELDNAME_METADATA + "." + sample.getId());
-        	            sampleIdToIndividualMap.put(sample.getId(), sample.getIndividual());
-        	        }
-            	tAgg.getPipeline().add(projectOp);
-            }
-            runIterator = mongoTemplate.aggregate(tAgg, VariantRunData.class).iterator();
+        Query q = new Query().addCriteria(new Criteria().andOperator(
+			Criteria.where("_id." + VariantRunDataId.FIELDNAME_VARIANT_ID).in(varMap.keySet()),
+			Criteria.where("_id." + VariantRunDataId.FIELDNAME_PROJECT_ID).is(projId)
+		));
+        q.fields().include(fV2Model ? (VariantRunDataV2.SECTION_ADDITIONAL_INFO + "." + VariantRunDataV2.FIELDNAME_ADDITIONAL_INFO_EFFECT_GENE) : (VariantRunData.SECTION_ADDITIONAL_INFO + "." + VariantRunData.FIELDNAME_ADDITIONAL_INFO_EFFECT_GENE));
+        q.fields().include(fV2Model ? (VariantRunDataV2.SECTION_ADDITIONAL_INFO + "." + VariantRunDataV2.FIELDNAME_ADDITIONAL_INFO_EFFECT_NAME) : (VariantRunData.SECTION_ADDITIONAL_INFO + "." + VariantRunData.FIELDNAME_ADDITIONAL_INFO_EFFECT_NAME));
+        
+        if (samples.size() > 0) {	// get genotypes for wanted individuals/callSets only
+            for (GenotypingSample sample : samples)
+    	        if (sRun == null || sample.getRun().equals(sRun)) {
+    	            sampleIdToIndividualMap.put(sample.getId(), sample.getIndividual());
+    	            q.fields().include((fV2Model ? VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES : VariantRunData.FIELDNAME_GENOTYPES) + "." + sample.getId());
+    	            if (!fV2Model)
+	        			for (String ann : annotationFieldsToProject)
+	        				q.fields().include(VariantRunData.FIELDNAME_METADATA + "." + ann + "." + sample.getId());
+    	        }
         }
 
+        Iterator runIterator = mongoTemplate.find(q, targetClass).iterator();
         while (runIterator.hasNext()) {
         	Object run = runIterator.next();
             Map<String, List<String>> annotations = new HashMap<>();
@@ -1888,7 +1877,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             Variant var;
             TreeSet<Call> calls = new TreeSet(new AlphaNumericComparator<Call>());	// for automatic sorting
             
-        	if (run instanceof VariantRunDataV2) {	// database in based on MGDB v2
+        	if (fV2Model) {	// database in based on MGDB v2
         		VariantRunDataV2 vrd = (VariantRunDataV2) run;
             	if (variantsForWhichAnnotationWasRetrieved.contains(vrd.getId().getVariantId()))
             		continue;
@@ -1904,10 +1893,10 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                         // field EFF should be stored in variantAnnotation !
                         // stored in ai for the moment, not supported by ga4gh  
                         // ANN (vcf 4.2) is stored in variantAnnotation 
-                    } else if (subKey.equals(VariantRunData.FIELDNAME_ADDITIONAL_INFO_EFFECT_GENE)) {
+                    } else if (subKey.equals(VariantRunDataV2.FIELDNAME_ADDITIONAL_INFO_EFFECT_GENE)) {
                         List<String> listGene = (List<String>) vrd.getAdditionalInfo().get(subKey);
                         annotations.put(subKey, listGene);
-                    } else if (subKey.equals(VariantRunData.FIELDNAME_ADDITIONAL_INFO_EFFECT_NAME)) {
+                    } else if (subKey.equals(VariantRunDataV2.FIELDNAME_ADDITIONAL_INFO_EFFECT_NAME)) {
                         List<String> listEffect = (List<String>) vrd.getAdditionalInfo().get(subKey);
                         annotations.put(subKey, listEffect);
                     }
@@ -1937,7 +1926,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                                         break;
 
                                     case VCFConstants.PHASE_SET_KEY:
-                                    case VariantData.GT_FIELD_PHASED_ID:
+                                    case AbstractVariantDataV2.GT_FIELD_PHASED_ID:
                                         phaseSet = sampleGT.getAdditionalInfo().get(aiKey).toString();
                                         break;
 
@@ -2039,7 +2028,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                                     break;
 
                                 case VCFConstants.PHASE_SET_KEY:
-                                case VariantData.GT_FIELD_PHASED_ID:
+                                case AbstractVariantData.GT_FIELD_PHASED_ID:
                                     phaseSet = md.toString();
                                     break;
 
@@ -2406,13 +2395,17 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             }
 
             Database db = MongoTemplateManager.getCommonsTemplate().findById(id, Database.class);
+            String assemblies = "";
+        	for (Assembly assembly : mongoTemplate.findAll(Assembly.class))
+        		assemblies += (assemblies.isEmpty() ? "" : ", ") + assembly.getName();
             String taxoDesc = db.getTaxon() != null ? (db.getSpecies() != null ? "Species: " + db.getSpecies() : "") + (db.getTaxon() != null && !db.getTaxon().equals(db.getSpecies()) ? "" : (db.getSpecies() != null ? " ; " : "") + "Taxon: " + db.getTaxon()) : "";
             referenceSet = ReferenceSet.newBuilder()
                     .setId(id)
                     .setName(id)
                     .setMd5checksum(Helper.convertToMD5(concatId))
                     .setSourceAccessions(list)
-                    .setNcbiTaxonId(db.getTaxid())	/*TODO: call setAssemblyId() ? */
+                    .setNcbiTaxonId(db.getTaxid())
+                    .setAssemblyId(assemblies)
                     .setDescription((taxoDesc.isEmpty() ? "" : (taxoDesc + " ; ")) + mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class)).distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; " + mongoTemplate.count(new Query(), VariantData.class) + " markers")
                     .build();
         }
@@ -2437,7 +2430,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
 
             GenotypingProject proj = mongoTemplate.findById(projId, GenotypingProject.class);
-            Set<String> listRef = proj.getSequences();
+            Set<String> listRef = proj.getSequences(assemblyId.get());
 
             // check if the sequence is in the list 
             if (listRef.contains(name)) {
@@ -2688,25 +2681,29 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         for (int i = start; i < end; i++) {
             module = listModules.get(i);
             MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
-//            boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
             Database db = MongoTemplateManager.getCommonsTemplate().findById(module, Database.class);
             String taxoDesc = (db.getSpecies() != null ? "Species: " + db.getSpecies() : "") + (db.getTaxon());
-            String refCountDesc;
+            String refCountDesc, assemblies = null;
             MongoCollection<Document> projectColl = mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class));
             if (mongoTemplate.getDb().getName().startsWith("mgdb2_"))
             	refCountDesc = projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; ";
             else {
             	refCountDesc = "";
-            	for (Assembly assembly : mongoTemplate.findAll(Assembly.class))
-            		refCountDesc += projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES + "." + assembly.getId(), String.class).into(new ArrayList<>()).size() + " references (assembly " + assembly.getName() + ")";
+            	assemblies = "";
+            	for (Assembly assembly : mongoTemplate.findAll(Assembly.class)) {
+            		refCountDesc += projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES + "." + assembly.getId(), String.class).into(new ArrayList<>()).size() + " references (assembly \"" + assembly.getName() + "\")";
+            		assemblies += (assemblies.isEmpty() ? "" : ", ") + assembly.getName();
+            	}
             	refCountDesc += "; ";
             }
+            
             ReferenceSet referenceSet = ReferenceSet.newBuilder()
                     .setId(module)
                     .setName(module)
                     .setMd5checksum("")	/* not supported at the time */
                     .setSourceAccessions(list)
                     .setNcbiTaxonId(db.getTaxid())
+                    .setAssemblyId(assemblies)
                     .setDescription((taxoDesc == null ? "" : (taxoDesc + " ; ")) + refCountDesc + mongoTemplate.getCollection(mongoTemplate.getCollectionName(VariantData.class)).estimatedDocumentCount() + " markers")
                     .build();
             listRef.add(referenceSet);
@@ -2862,7 +2859,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 					samples = new ArrayList<>();
 				}
 
-				List<Variant> listVar = getVariantListFromDBCursor(module, Integer.parseInt(info[1]), cursor, samples, null, gsvr.getAssemblyId());
+				List<Variant> listVar = getVariantListFromDBCursor(module, Integer.parseInt(info[1]), cursor, samples, null);
 				String nextPageToken = null;
 
                 // if there is still more result after PageSize iterations
@@ -2888,7 +2885,6 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 
     @Override
     public SearchReferencesResponse searchReferences(SearchReferencesRequest srr) throws AvroRemoteException, GAException {
-
         SearchReferencesResponse response = null;
 
         // get information from id
@@ -2906,7 +2902,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             }
 
             MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
-            boolean fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
+            boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
             int start;
             int end;
             int pageSize;
@@ -2938,7 +2934,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                 else {
 	                List<GenotypingProject> listProj = mongoTemplate.find(q, GenotypingProject.class);
 	                for (int i = 0; i < listProj.size(); i++)
-	                    for (String seq : listProj.get(i).getSequences(gsr.getAssemblyId()))
+	                    for (String seq : listProj.get(i).getSequences(assemblyId.get()))
 	                        mapSeq.put(seq, i + 1);
                 }
             }
