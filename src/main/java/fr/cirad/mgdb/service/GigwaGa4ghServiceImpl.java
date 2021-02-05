@@ -415,7 +415,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             BasicDBObject orSelectedNumberOfAllelesList = new BasicDBObject();
             for (String aSelectedNumberOfAlleles : alleleCountList) {
                 int alleleNumber = Integer.parseInt(aSelectedNumberOfAlleles);
-                orList3.add(new BasicDBObject(VariantData.FIELDNAME_KNOWN_ALLELE_LIST, new BasicDBObject("$size", alleleNumber)));
+                orList3.add(new BasicDBObject(fV2Model ? VariantDataV2.FIELDNAME_KNOWN_ALLELE_LIST : VariantData.FIELDNAME_KNOWN_ALLELE_LIST, new BasicDBObject("$size", alleleNumber)));
                 orSelectedNumberOfAllelesList.put("$or", orList3);
             }
             variantFeatureFilterList.add(orSelectedNumberOfAllelesList);
