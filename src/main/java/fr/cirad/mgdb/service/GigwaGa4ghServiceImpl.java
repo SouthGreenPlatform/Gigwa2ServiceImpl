@@ -1823,7 +1823,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 	            	end = start;
             }
 
-            typeMap.put(id, (String) obj.get(VariantData.FIELDNAME_TYPE));
+            typeMap.put(id, (String) obj.get(fV2Model ? VariantDataV2.FIELDNAME_TYPE : VariantData.FIELDNAME_TYPE));
             Variant.Builder variantBuilder = Variant.newBuilder()
                     .setId(createId(module, projId, id.toString()))
                     .setVariantSetId(createId(module, projId))
@@ -3053,6 +3053,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         if (info == null) {
             // wrong number of param or wrong module name 
         } else {
+        	boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
             String module = info[0];
             String variantId = info[2];
             String[] headerField;
@@ -3061,11 +3062,11 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             // parse annotation fields
             BasicDBObject queryVarAnn = new BasicDBObject();
             BasicDBObject varAnnField = new BasicDBObject();
-            queryVarAnn.put("_id." + VariantRunDataId.FIELDNAME_VARIANT_ID, variantId);
-            varAnnField.put(VariantData.FIELDNAME_KNOWN_ALLELE_LIST, 1);
-            varAnnField.put(VariantData.SECTION_ADDITIONAL_INFO, 1);
-            Document variantRunDataObj = MongoTemplateManager.get(module).getCollection(MongoTemplateManager.getMongoCollectionName(VariantRunData.class)).find(queryVarAnn).projection(varAnnField).first();
-            Document variantAnnotationObj = variantRunDataObj != null ? (Document) variantRunDataObj.get(VariantRunData.SECTION_ADDITIONAL_INFO) : null;
+            queryVarAnn.put("_id." + (fV2Model ? VariantRunDataV2.VariantRunDataId.FIELDNAME_VARIANT_ID : VariantRunData.VariantRunDataId.FIELDNAME_VARIANT_ID), variantId);
+            varAnnField.put(fV2Model ? VariantDataV2.FIELDNAME_KNOWN_ALLELE_LIST : VariantData.FIELDNAME_KNOWN_ALLELE_LIST, 1);
+            varAnnField.put(fV2Model ? VariantDataV2.SECTION_ADDITIONAL_INFO : VariantData.SECTION_ADDITIONAL_INFO, 1);
+            Document variantRunDataObj = MongoTemplateManager.get(module).getCollection(MongoTemplateManager.getMongoCollectionName(fV2Model ? VariantRunDataV2.class : VariantRunData.class)).find(queryVarAnn).projection(varAnnField).first();
+            Document variantAnnotationObj = variantRunDataObj != null ? (Document) variantRunDataObj.get(fV2Model ? VariantDataV2.SECTION_ADDITIONAL_INFO : VariantData.SECTION_ADDITIONAL_INFO) : null;
             if (variantAnnotationObj != null)
             {
                 String ann = (String) variantAnnotationObj.get(VcfImport.ANNOTATION_FIELDNAME_ANN);
