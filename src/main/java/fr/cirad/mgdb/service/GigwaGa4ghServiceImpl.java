@@ -265,11 +265,11 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         Collections.sort(variantTypesArray, new AlphaNumericComparator());
         return variantTypesArray;
     }
-
-    @Override
-    public Collection<String> listModules() {
-        return MongoTemplateManager.getAvailableModules();
-    }
+//
+//    @Override
+//    public Collection<String> listModules() {
+//        return MongoTemplateManager.getAvailableModules();
+//    }
 
     @Override
     public int getProjectPloidyLevel(String sModule, int projId) {
@@ -1809,33 +1809,25 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             String id = (String) obj.get("_id");
             List<String> knownAlleles = ((List<String>) obj.get(fV2Model ? AbstractVariantDataV2.FIELDNAME_KNOWN_ALLELE_LIST : AbstractVariantData.FIELDNAME_KNOWN_ALLELE_LIST));
 
-            Document rp = ((Document) obj.get(fV2Model ? AbstractVariantDataV2.FIELDNAME_REFERENCE_POSITION : AbstractVariantData.FIELDNAME_REFERENCE_POSITION));
+            Long start = -1l, end = -1l;
+            String referenceName = "";
+            
+            Document rp = (Document) Helper.readPossiblyNestedField(obj, !fV2Model ? AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + nAssemblyId : AbstractVariantDataV2.FIELDNAME_REFERENCE_POSITION, "; ", null);
             if (rp == null)
-            	throw new AvroRemoteException("Variant " + id.toString() + " has no reference position!");
-            
-            if (!fV2Model) {            	
-            	if (nAssemblyId == null || nAssemblyId < 0) {
-            		if (rp.size() >= 1) {
-	            		nAssemblyId = Integer.valueOf(rp.keySet().iterator().next());
-	            		if (rp.size() == 1)
-	            			LOG.info("Used unique found assembly because unspecified");
-	            		else
-	            			LOG.warn("Used first found assembly because unspecified");
-            		}
-            	}
-            	rp = (Document) rp.get("" + nAssemblyId);
+            	LOG.warn("Variant " + id.toString() + " has no reference position " + (!fV2Model ? "on assembly " + nAssemblyId : "") + "!");
+            else {
+	            referenceName = (String) rp.get(ReferencePosition.FIELDNAME_SEQUENCE);
+	            start = (Long) rp.get(ReferencePosition.FIELDNAME_START_SITE);
+	            end = (Long) rp.get(ReferencePosition.FIELDNAME_END_SITE);
+	            if (end == null && start != null)
+	            	end = start;
             }
-            
-            Long start = (Long) rp.get(ReferencePosition.FIELDNAME_START_SITE);
-            Long end = (Long) rp.get(ReferencePosition.FIELDNAME_END_SITE);
-            if (end == null && start != null)
-            	end = start;
 
             typeMap.put(id, (String) obj.get(VariantData.FIELDNAME_TYPE));
             Variant.Builder variantBuilder = Variant.newBuilder()
                     .setId(createId(module, projId, id.toString()))
                     .setVariantSetId(createId(module, projId))
-                    .setReferenceName((String) rp.get(ReferencePosition.FIELDNAME_SEQUENCE))
+                    .setReferenceName(referenceName)
                     .setStart(start)
                     .setEnd(end);
             if (knownAlleles.size() == 0)
@@ -2395,19 +2387,32 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
             }
 
             Database db = MongoTemplateManager.getCommonsTemplate().findById(id, Database.class);
-            String assemblies = "";
-        	for (Assembly assembly : mongoTemplate.findAll(Assembly.class))
-        		assemblies += (assemblies.isEmpty() ? "" : ", ") + assembly.getName();
-            String taxoDesc = db.getTaxon() != null ? (db.getSpecies() != null ? "Species: " + db.getSpecies() : "") + (db.getTaxon() != null && !db.getTaxon().equals(db.getSpecies()) ? "" : (db.getSpecies() != null ? " ; " : "") + "Taxon: " + db.getTaxon()) : "";
+            
+            String taxoDesc = (db.getSpecies() != null ? "Species: " + db.getSpecies() : "") + (db.getTaxon() != null && !db.getTaxon().isEmpty() ? (db.getSpecies() == null ? "" : " ; ") + "Taxon: " + db.getTaxon() : "");
+            String refCountDesc;
+            List<String> assemblies = new ArrayList<>();
+            MongoCollection<Document> projectColl = mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class));
+            if (mongoTemplate.getDb().getName().startsWith("mgdb2_"))
+            	refCountDesc = projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; ";
+            else {
+            	refCountDesc = "";
+            	for (Assembly assembly : mongoTemplate.findAll(Assembly.class)) {
+            		refCountDesc += (refCountDesc.isEmpty() ? "" : ", ") + projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES + "." + assembly.getId(), String.class).into(new ArrayList<>()).size() + " references (assembly \"" + assembly.getName() + "\")";
+            		assemblies.add(assembly.getName());
+            	}
+            	refCountDesc += " ; ";
+            }
+            
             referenceSet = ReferenceSet.newBuilder()
-                    .setId(id)
-                    .setName(id)
-                    .setMd5checksum(Helper.convertToMD5(concatId))
-                    .setSourceAccessions(list)
-                    .setNcbiTaxonId(db.getTaxid())
-                    .setAssemblyId(assemblies)
-                    .setDescription((taxoDesc.isEmpty() ? "" : (taxoDesc + " ; ")) + mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class)).distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; " + mongoTemplate.count(new Query(), VariantData.class) + " markers")
-                    .build();
+                .setId(id)
+                .setName(id)
+                .setMd5checksum(Helper.convertToMD5(concatId))
+                .setSourceAccessions(list)
+                .setNcbiTaxonId(db.getTaxid())
+                .setAssemblyId(assemblies.isEmpty() ? null : StringUtils.join(assemblies, ", "))
+//                    .setDescription((taxoDesc.isEmpty() ? "" : (taxoDesc + " ; ")) + mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class)).distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; " + mongoTemplate.count(new Query(), VariantData.class) + " markers")
+                .setDescription((taxoDesc.isEmpty() ? "" : (taxoDesc + " ; ")) + refCountDesc + mongoTemplate.getCollection(mongoTemplate.getCollectionName(VariantData.class)).estimatedDocumentCount() + " markers")
+                .build();
         }
         return referenceSet;
     }
@@ -2643,19 +2648,17 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 	
     @Override
     public SearchReferenceSetsResponse searchReferenceSets(SearchReferenceSetsRequest srsr) throws AvroRemoteException, GAException {
-        List<String> list = new ArrayList<>();
-        List<ReferenceSet> listRef = new ArrayList<>();
+        List<String> sourceAccessions = new ArrayList<>();
 
-        List<String> listModules = new ArrayList<>(MongoTemplateManager.getAvailableModules());
-        Collections.sort(listModules);
+        List<String> moduleList = new ArrayList<>(MongoTemplateManager.getAvailableModules(null));
+        Collections.sort(moduleList);
         int start;
         int end;
         int pageSize;
         int pageToken = 0;
         String nextPageToken;
-        String module;
 
-        int size = listModules.size();
+        int size = moduleList.size();
         // if page size is not specified, return all results
         if (srsr.getPageSize() != null) {
             pageSize = srsr.getPageSize();
@@ -2676,40 +2679,62 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         	end = pageSize * (pageToken + 1);
             nextPageToken = Integer.toString(pageToken + 1);
         }
+        
+        List<Thread> threadsToWaitfor = new ArrayList<>();
 
         // add a Reference Set for each existing module 
+        ReferenceSet[] refSets = new ReferenceSet[end];
         for (int i = start; i < end; i++) {
-            module = listModules.get(i);
-            MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
-            Database db = MongoTemplateManager.getCommonsTemplate().findById(module, Database.class);
-            String taxoDesc = (db.getSpecies() != null ? "Species: " + db.getSpecies() : "") + (db.getTaxon());
-            String refCountDesc, assemblies = null;
-            MongoCollection<Document> projectColl = mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class));
-            if (mongoTemplate.getDb().getName().startsWith("mgdb2_"))
-            	refCountDesc = projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; ";
-            else {
-            	refCountDesc = "";
-            	assemblies = "";
-            	for (Assembly assembly : mongoTemplate.findAll(Assembly.class)) {
-            		refCountDesc += projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES + "." + assembly.getId(), String.class).into(new ArrayList<>()).size() + " references (assembly \"" + assembly.getName() + "\")";
-            		assemblies += (assemblies.isEmpty() ? "" : ", ") + assembly.getName();
+        	final int index = i;
+        	final String module = moduleList.get(i);
+            Thread t = new Thread() {
+            	public void run() {            		
+                    MongoTemplate mongoTemplate = MongoTemplateManager.get(module);
+                    Database db = MongoTemplateManager.getCommonsTemplate().findById(module, Database.class);
+                    String taxoDesc = (db.getSpecies() != null ? "Species: " + db.getSpecies() : "") + (db.getTaxon() != null && !db.getTaxon().isEmpty() ? (db.getSpecies() == null ? "" : " ; ") + "Taxon: " + db.getTaxon() : "");
+                    String refCountDesc;
+                    List<String> assemblies = new ArrayList<>();
+                    MongoCollection<Document> projectColl = mongoTemplate.getCollection(mongoTemplate.getCollectionName(GenotypingProject.class));
+                    if (mongoTemplate.getDb().getName().startsWith("mgdb2_"))
+                    	refCountDesc = projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES, String.class).into(new ArrayList<>()).size() + " references ; ";
+                    else {
+                    	refCountDesc = "";
+                    	for (Assembly assembly : mongoTemplate.findAll(Assembly.class)) {
+                    		refCountDesc += (refCountDesc.isEmpty() ? "" : ", ") + projectColl.distinct(GenotypingProject.FIELDNAME_SEQUENCES + "." + assembly.getId(), String.class).into(new ArrayList<>()).size() + " references (assembly \"" + assembly.getName() + "\")";
+                    		assemblies.add(assembly.getName());
+                    	}
+                    	refCountDesc += " ; ";
+                    }
+                    
+                    ReferenceSet referenceSet = ReferenceSet.newBuilder()
+                            .setId(module)
+                            .setName(module)
+                            .setMd5checksum("")	/* not supported at the time */
+                            .setSourceAccessions(sourceAccessions)
+                            .setNcbiTaxonId(db.getTaxid())
+                            .setAssemblyId(assemblies.isEmpty() ? null : StringUtils.join(assemblies, ", "))
+                            .setDescription((taxoDesc.isEmpty() ? "" : (taxoDesc + " ; ")) + refCountDesc + mongoTemplate.getCollection(mongoTemplate.getCollectionName(VariantData.class)).estimatedDocumentCount() + " markers")
+                            .build();
+                    refSets[index] = referenceSet;
             	}
-            	refCountDesc += "; ";
+            };
+            if (i != 0 && i % 5 /* number of simultaneously scanned DBs */ == 0)
+            	t.run();
+            else {
+            	t.start();
+            	threadsToWaitfor.add(t);
             }
-            
-            ReferenceSet referenceSet = ReferenceSet.newBuilder()
-                    .setId(module)
-                    .setName(module)
-                    .setMd5checksum("")	/* not supported at the time */
-                    .setSourceAccessions(list)
-                    .setNcbiTaxonId(db.getTaxid())
-                    .setAssemblyId(assemblies)
-                    .setDescription((taxoDesc == null ? "" : (taxoDesc + " ; ")) + refCountDesc + mongoTemplate.getCollection(mongoTemplate.getCollectionName(VariantData.class)).estimatedDocumentCount() + " markers")
-                    .build();
-            listRef.add(referenceSet);
         }
 
-        return SearchReferenceSetsResponse.newBuilder().setReferenceSets(listRef).setNextPageToken(nextPageToken).build();
+		try {
+			for (Thread t : threadsToWaitfor)
+				t.join();
+		} catch (InterruptedException e) {
+            LOG.error("Error searching ReferenceSets", e);
+            throw new GAException(e);
+		}
+
+        return SearchReferenceSetsResponse.newBuilder().setReferenceSets(Arrays.asList(refSets)).setNextPageToken(nextPageToken).build();
     }
 
     @Override
