@@ -572,7 +572,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
     	                	LOG.debug("Pre-filtering data on variant collection");
                     }
                 }
-                GenotypingDataQueryBuilder genotypingDataQueryBuilder = new GenotypingDataQueryBuilder(gsvr, tmpVarColl, variantQueryDBList, true);
+                GenotypingDataQueryBuilder genotypingDataQueryBuilder = new GenotypingDataQueryBuilder(assemblyId.get(), gsvr, tmpVarColl, variantQueryDBList, true);
             	final int nChunkCount = genotypingDataQueryBuilder.getNumberOfQueries();
             	final List<Integer> shuffledChunkIndexes = genotypingDataQueryBuilder.suffleChunkOrder();
 
@@ -844,7 +844,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         if (filteredGroups.size() > 0){   // filter on genotyping data
             final ArrayList<Thread> threadsToWaitFor = new ArrayList<>();
             final AtomicInteger finishedThreadCount = new AtomicInteger(0);
-            final GenotypingDataQueryBuilder genotypingDataQueryBuilder = new GenotypingDataQueryBuilder(gsvr, tmpVarColl, variantQueryDBList, false);
+            final GenotypingDataQueryBuilder genotypingDataQueryBuilder = new GenotypingDataQueryBuilder(assemblyId.get(), gsvr, tmpVarColl, variantQueryDBList, false);
             try{
                 final int nChunkCount = genotypingDataQueryBuilder.getNumberOfQueries();
                 final List<Integer> shuffledChunkIndexes = genotypingDataQueryBuilder.suffleChunkOrder();

@@ -214,7 +214,7 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 		genotypePatternToQueryMap.put(GENOTYPE_CODE_LABEL_WITHOUT_ABNORMAL_HETEROZYGOSITY, GenotypingDataQueryBuilder.AGGREGATION_QUERY_WITHOUT_ABNORMAL_HETEROZYGOSITY);
 	}
 	
-	public GenotypingDataQueryBuilder(GigwaSearchVariantsRequest gsvr, MongoCollection<Document> tempExportColl, BasicDBList variantQueryDBList, boolean fForCounting) throws Exception
+	public GenotypingDataQueryBuilder(Integer assemblyId, GigwaSearchVariantsRequest gsvr, MongoCollection<Document> tempExportColl, BasicDBList variantQueryDBList, boolean fForCounting) throws Exception
 	{
 		this.variantQueryDBList = variantQueryDBList;
 		
@@ -277,9 +277,9 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 		this.projectionFields = new Document();
 		if (!fForCounting)
 		{
-	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + ReferencePosition.FIELDNAME_SEQUENCE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE));
-	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + ReferencePosition.FIELDNAME_START_SITE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE));
-	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + ReferencePosition.FIELDNAME_END_SITE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_END_SITE));
+	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + (assemblyId != null ? assemblyId + "¤" : "") + ReferencePosition.FIELDNAME_SEQUENCE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_SEQUENCE));
+	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + (assemblyId != null ? assemblyId + "¤" : "") + ReferencePosition.FIELDNAME_START_SITE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_START_SITE));
+	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + (assemblyId != null ? assemblyId + "¤" : "") + ReferencePosition.FIELDNAME_END_SITE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_END_SITE));
 	        groupFields.put(VariantData.FIELDNAME_TYPE, new Document("$first", "$" + VariantData.FIELDNAME_TYPE));
 	        groupFields.put(VariantData.FIELDNAME_KNOWN_ALLELE_LIST, new Document("$first", "$" + VariantData.FIELDNAME_KNOWN_ALLELE_LIST));
 
@@ -291,9 +291,9 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 						fGotIndividualsWithMultipleSamples = true;
 						break;
 					}
-			projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + ReferencePosition.FIELDNAME_SEQUENCE);
-			projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_START_SITE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + ReferencePosition.FIELDNAME_START_SITE);
-	        projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_END_SITE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + ReferencePosition.FIELDNAME_END_SITE);
+			projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_SEQUENCE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + (assemblyId != null ? assemblyId + (fGotIndividualsWithMultipleSamples ? "¤" : ".") : "") + ReferencePosition.FIELDNAME_SEQUENCE);
+			projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_START_SITE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + (assemblyId != null ? assemblyId + (fGotIndividualsWithMultipleSamples ? "¤" : ".") : "") + ReferencePosition.FIELDNAME_START_SITE);
+	        projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_END_SITE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + (assemblyId != null ? assemblyId + (fGotIndividualsWithMultipleSamples ? "¤" : ".") : "") + ReferencePosition.FIELDNAME_END_SITE);
 	        projectionFields.put(AbstractVariantData.FIELDNAME_TYPE, "$" + VariantData.FIELDNAME_TYPE);
 	        projectionFields.put(AbstractVariantData.FIELDNAME_KNOWN_ALLELE_LIST, "$" + VariantData.FIELDNAME_KNOWN_ALLELE_LIST);
 	    }
@@ -484,7 +484,7 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 				List<GenotypingSample> individualSamples = individualToSampleListMap[g].get(selectedIndividuals[g].get(j));
 				for (int k=0; k<individualSamples.size(); k++) {	// this loop is executed only once for single-run projects
 					GenotypingSample individualSample = individualSamples.get(k);
-					String pathToGT = fV2Model ? (VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + individualSample.getId() + "." + SampleGenotype.FIELDNAME_GENOTYPECODE) : VariantRunData.FIELDNAME_GENOTYPES + "." + individualSample.getId() + ".";
+					String pathToGT = fV2Model ? (VariantRunDataV2.FIELDNAME_SAMPLEGENOTYPES + "." + individualSample.getId() + "." + SampleGenotype.FIELDNAME_GENOTYPECODE) : (VariantRunData.FIELDNAME_GENOTYPES + "." + individualSample.getId());
 //					Object fullPathToGT = "$" + VariantRunData.FIELDNAME_SAMPLEGENOTYPES + "." + pathToGT;
 					group.put(pathToGT.replaceAll("\\.", "¤"), new BasicDBObject("$addToSet", "$" + pathToGT));
 					individualSampleGenotypeList.add("$" + pathToGT.replaceAll("\\.", "¤"));
