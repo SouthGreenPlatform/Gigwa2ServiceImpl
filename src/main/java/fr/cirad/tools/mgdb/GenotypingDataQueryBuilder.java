@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -44,6 +45,7 @@ import com.mongodb.client.MongoCollection;
 
 import fr.cirad.controller.GigwaMethods;
 import fr.cirad.mgdb.model.mongo.maintypes.GenotypingProject;
+import fr.cirad.mgdb.model.mongo.maintypes.GenotypingProjectV2;
 import fr.cirad.mgdb.model.mongo.maintypes.GenotypingSample;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantData;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData;
@@ -71,8 +73,12 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 
 	private boolean fV2Model = false;
 
-	/** The genotyping project. */
-	private GenotypingProject genotypingProject;
+	/** The genotyping project id. */
+    private int projId;
+//	private GenotypingProject genotypingProject;
+
+    private int ploidyLevel;
+    private TreeSet<Integer> alleleCounts;
 	
 	/** Whether or not project has effect annotations. */
 	private boolean projectHasEffectAnnotations;
@@ -223,16 +229,26 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
         int projId = Integer.parseInt(info[1]);
 
 		this.mongoTemplate = MongoTemplateManager.get(sModule);
-		this.fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
+		fV2Model = mongoTemplate.getDb().getName().startsWith("mgdb2_");
 
-		this.genotypingProject = mongoTemplate.findById(Integer.valueOf(projId), GenotypingProject.class);
+		this.projId = projId;
+		if (fV2Model) {
+			GenotypingProjectV2 genotypingProject = mongoTemplate.findById(Integer.valueOf(projId), GenotypingProjectV2.class);
+			alleleCounts = genotypingProject.getAlleleCounts();
+			ploidyLevel = genotypingProject.getPloidyLevel();
+		}
+		else {
+			GenotypingProject genotypingProject = mongoTemplate.findById(Integer.valueOf(projId), GenotypingProject.class);
+			alleleCounts = genotypingProject.getAlleleCounts();
+			ploidyLevel = genotypingProject.getPloidyLevel();
+		}
 		this.geneNames = gsvr.getGeneName();
 		this.variantEffects = gsvr.getVariantEffect();
 
 		Query q = new Query();
        	q.addCriteria(Criteria.where("_id").is(projId));
-       	q.addCriteria(Criteria.where(GenotypingProject.FIELDNAME_EFFECT_ANNOTATIONS + ".0").exists(true));
-       	this.projectHasEffectAnnotations = mongoTemplate.findOne(q, GenotypingProject.class) != null;
+       	q.addCriteria(Criteria.where(fV2Model ? GenotypingProjectV2.FIELDNAME_EFFECT_ANNOTATIONS : GenotypingProject.FIELDNAME_EFFECT_ANNOTATIONS + ".0").exists(true));
+       	this.projectHasEffectAnnotations = mongoTemplate.findOne(q, Class.forName(fV2Model ? GenotypingProjectV2.class.getName() : GenotypingProject.class.getName())) != null;
 
 		this.selectedIndividuals[0] = gsvr.getCallSetIds().size() == 0 ? MgdbDao.getProjectIndividuals(sModule, projId) : gsvr.getCallSetIds().stream().map(csi -> csi.substring(1 + csi.lastIndexOf(GigwaMethods.ID_SEPARATOR))).collect(Collectors.toList());
 		this.operator[0] = genotypePatternToQueryMap.get(gsvr.getGtPattern());
@@ -357,7 +373,7 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 			initialMatchList.addAll(variantQueryDBList);	// more efficient if added first in this case
 		
         if (Helper.estimDocCount(mongoTemplate,GenotypingProject.class) != 1)
-			initialMatchList.add(new BasicDBObject("_id." + VariantRunDataId.FIELDNAME_PROJECT_ID, genotypingProject.getId()));
+			initialMatchList.add(new BasicDBObject("_id." + VariantRunDataId.FIELDNAME_PROJECT_ID, projId));
     	
         int currentInterval = intervalIndexList.get(0);
         intervalIndexList.remove(0);
@@ -428,8 +444,8 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
     			}
     		}
 
-	        int nMaxNumberOfAllelesForOneVariant = maxAlleleCount > 0 ? maxAlleleCount : genotypingProject.getAlleleCounts().last(), nPloidy = genotypingProject.getPloidyLevel();
-	        int nNumberOfPossibleGenotypes = (int) (nMaxNumberOfAllelesForOneVariant + MathUtils.factorial(nMaxNumberOfAllelesForOneVariant)/(MathUtils.factorial(nPloidy)*MathUtils.factorial(nMaxNumberOfAllelesForOneVariant-nPloidy)));
+	        int nMaxNumberOfAllelesForOneVariant = maxAlleleCount > 0 ? maxAlleleCount : alleleCounts.last();
+	        int nNumberOfPossibleGenotypes = (int) (nMaxNumberOfAllelesForOneVariant + MathUtils.factorial(nMaxNumberOfAllelesForOneVariant)/(MathUtils.factorial(ploidyLevel)*MathUtils.factorial(nMaxNumberOfAllelesForOneVariant-ploidyLevel)));
 	        double maxMissingGenotypeCount = selectedIndividuals[g].size() * missingData[g] / 100;
     		if ("$ne".equals(cleanOperator[g]) && !fNegateMatch[g]) {
 		        if (selectedIndividuals[g].size() - maxMissingGenotypeCount > nNumberOfPossibleGenotypes) {
@@ -531,12 +547,12 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 				if (fGotIndividualsWithMultipleSamples) {
 	            	BasicDBList condList = new BasicDBList();
 	                condList.add(new BasicDBObject("$eq", new Object[] {new BasicDBObject("$size", "$$g"), 1})); // if we have several distinct genotypes for this individual then we treat it as missing data (no alt allele to take into account)
-	                condList.add(new BasicDBObject("$add", Arrays.asList(1, new BasicDBObject("$cmp", Arrays.asList(new BasicDBObject("$arrayElemAt", Arrays.asList("$$g", 0)), genotypingProject.getPloidyLevel() == 1 ? "1" : "0/1")))));
+	                condList.add(new BasicDBObject("$add", Arrays.asList(1, new BasicDBObject("$cmp", Arrays.asList(new BasicDBObject("$arrayElemAt", Arrays.asList("$$g", 0)), ploidyLevel == 1 ? "1" : "0/1")))));
 	                condList.add(0);
 					inObj = new BasicDBObject("$cond", condList);
 				}
 				else
-					inObj = new BasicDBObject("$add", Arrays.asList(1, new BasicDBObject("$cmp", Arrays.asList("$$g", genotypingProject.getPloidyLevel() == 1 ? "1" : "0/1"))));
+					inObj = new BasicDBObject("$add", Arrays.asList(1, new BasicDBObject("$cmp", Arrays.asList("$$g", ploidyLevel == 1 ? "1" : "0/1"))));
             	in.put("a" + g, new BasicDBObject("$sum", new BasicDBObject("$map", new BasicDBObject("input", "$$gt" + g).append("as", "g").append("in", inObj))));
             }
 

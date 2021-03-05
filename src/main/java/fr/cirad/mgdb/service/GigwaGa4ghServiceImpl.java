@@ -451,13 +451,15 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         Query q = new Query();
         q.fields().include(GenotypingProject.FIELDNAME_SEQUENCES);
        	q.addCriteria(Criteria.where("_id").is(projId));
-        GenotypingProject proj = mongoTemplate.findOne(q, GenotypingProject.class);
+
+       	boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+       	int nSeqCount = fV2Model ? mongoTemplate.findOne(q, GenotypingProjectV2.class).getSequences().size() : mongoTemplate.findOne(q, GenotypingProject.class).getSequences(assemblyId.get()).size();
         
-    	int nSelectedSeqCount = gsvr.getReferenceName() == null || gsvr.getReferenceName().length() == 0 ? proj.getSequences(assemblyId.get()).size() : gsvr.getReferenceName().split(";").length;
+    	int nSelectedSeqCount = gsvr.getReferenceName() == null || gsvr.getReferenceName().length() == 0 ? nSeqCount : gsvr.getReferenceName().split(";").length;
     	if (nSelectedSeqCount == 1)
     		return null;	// we can't expect user to select less than a single sequence
 
-    	int nAvgVariantsPerSeq = (int) (mongoTemplate.count(new Query(), VariantData.class) / Math.max(1, proj.getSequences(assemblyId.get()).size()));
+    	int nAvgVariantsPerSeq = (int) (mongoTemplate.count(new Query(), VariantData.class) / Math.max(1, nSeqCount));
     	BigInteger maxSeqCount = BigInteger.valueOf(1000000000).multiply(BigInteger.valueOf(nMaxBillionGenotypesInvolved)).divide(BigInteger.valueOf(nAvgVariantsPerSeq).multiply(BigInteger.valueOf(nIndCount)));
     	int nMaxSeqCount = Math.max(1, maxSeqCount.intValue());
 
