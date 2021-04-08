@@ -846,6 +846,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         if (filteredGroups.size() > 0){   // filter on genotyping data
             final ArrayList<Thread> threadsToWaitFor = new ArrayList<>();
             final AtomicInteger finishedThreadCount = new AtomicInteger(0);
+            boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
             final GenotypingDataQueryBuilder genotypingDataQueryBuilder = new GenotypingDataQueryBuilder(assemblyId.get(), gsvr, tmpVarColl, variantQueryDBList, false);
             try{
                 final int nChunkCount = genotypingDataQueryBuilder.getNumberOfQueries();
@@ -950,7 +951,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 
                     if (partialCountArray != null)
                     	genotypingDataPipeline.add(new BasicDBObject("$limit", partialCountArray[chunkIndex]));
-                	genotypingDataPipeline.add(new BasicDBObject("$project", new BasicDBObject(VariantData.FIELDNAME_KNOWN_ALLELE_LIST, 1).append(VariantData.FIELDNAME_REFERENCE_POSITION, 1).append(VariantData.FIELDNAME_TYPE, 1)));
+                	genotypingDataPipeline.add(new BasicDBObject("$project", new BasicDBObject(fV2Model ? VariantDataV2.FIELDNAME_KNOWN_ALLELE_LIST : VariantData.FIELDNAME_KNOWN_ALLELE_LIST, 1).append(fV2Model ? VariantDataV2.FIELDNAME_TYPE : VariantData.FIELDNAME_TYPE, 1).append(!fV2Model ? VariantData.FIELDNAME_REFERENCE_POSITION + "." + assemblyId.get() : VariantDataV2.FIELDNAME_REFERENCE_POSITION, 1).append(fV2Model ? VariantDataV2.FIELDNAME_TYPE : VariantData.FIELDNAME_TYPE, 1)));
 
                     Thread queryThread = new Thread() {
                         @Override
@@ -1205,19 +1206,19 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 
             final OutputStream finalOS = os;
 			ArrayList<GenotypingSample> samplesToExport = MgdbDao.getSamplesForProject(sModule, projId, individualsToExport);
-            if (individualOrientedExportHandler != null)
-            {
+        	final Integer nAssemblyId = assemblyId.get(); // read it now while we're in the thread that can see the correct ThreadLocal value
+            if (individualOrientedExportHandler != null) {
                 if (!progress.isAborted()) {
                     Thread exportThread = new Thread() {
                     	public void run() {
                             try {
                                 progress.addStep("Reading and re-organizing genotypes"); // initial step will consist in organizing genotypes by individual rather than by marker
                                 progress.moveToNextStep();	// done with identifying variants
-                				Map<String, File> exportFiles = individualOrientedExportHandler.createExportFiles(sModule, assemblyId.get(), usedVarColl, variantQuery, samples1, samples2, processId, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, progress);
+                				Map<String, File> exportFiles = individualOrientedExportHandler.createExportFiles(sModule, nAssemblyId, usedVarColl, variantQuery, samples1, samples2, processId, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, progress);
                 				for (String step : individualOrientedExportHandler.getStepList())
                                     progress.addStep(step);
                                 progress.moveToNextStep();
-								individualOrientedExportHandler.exportData(finalOS, sModule, assemblyId.get(), exportFiles.values(), true, progress, usedVarColl, variantQuery, null, readyToExportFiles);
+								individualOrientedExportHandler.exportData(finalOS, sModule, nAssemblyId, exportFiles.values(), true, progress, usedVarColl, variantQuery, null, readyToExportFiles);
 					            if (!progress.isAborted()) {
 					                LOG.info("doVariantExport took " + (System.currentTimeMillis() - before) / 1000d + "s to process " + count + " variants and " + CollectionUtils.union(selectedIndividualList1, selectedIndividualList2).size() + " individuals");
 					                progress.markAsComplete();
@@ -1228,8 +1229,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 					            progress.setError("Error exporting data: " + e.getClass().getSimpleName() + (e.getMessage() != null ? " - " + e.getMessage() : ""));
 							}
                             finally {
-                                try
-                                {
+                                try {
 									finalOS.close();
 								}
                                 catch (IOException ignored)
@@ -1239,8 +1239,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                     };
                     if (gsver.isKeepExportOnServer())
                     	exportThread.start();
-                    else
-                    {
+                    else {
                         String contentType = individualOrientedExportHandler.getExportContentType();
                         if (contentType != null && contentType.trim().length() > 0)
                         	response.setContentType(contentType);
@@ -1249,8 +1248,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                     }
                 }
             }
-            else if (markerOrientedExportHandler != null)
-            {
+            else if (markerOrientedExportHandler != null) {
                 for (String step : markerOrientedExportHandler.getStepList()) {
                     progress.addStep(step);
                 }
@@ -1263,7 +1261,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
                 Thread exportThread = new Thread() {
                 	public void run() {
                         try {
-                        	markerOrientedExportHandler.exportData(finalOS, sModule, assemblyId.get(), samples1, samples2, progress, usedVarColl, variantQuery, null, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, readyToExportFiles);
+                        	markerOrientedExportHandler.exportData(finalOS, sModule, nAssemblyId, samples1, samples2, progress, usedVarColl, variantQuery, null, gsver.getAnnotationFieldThresholds(), gsver.getAnnotationFieldThresholds2(), samplesToExport, readyToExportFiles);
                             if (!progress.isAborted()) {
                                 LOG.info("doVariantExport took " + (System.currentTimeMillis() - before) / 1000d + "s to process " + count + " variants and " + CollectionUtils.union(selectedIndividualList1, selectedIndividualList2).size() + " individuals");
                                 progress.markAsComplete();
@@ -1274,8 +1272,7 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
 				            progress.setError("Error exporting data: " + e.getClass().getSimpleName() + (e.getMessage() != null ? " - " + e.getMessage() : ""));
 						}
                         finally {
-                            try
-                            {
+                            try {
 								finalOS.close();
 							}
                             catch (IOException ignored)
@@ -1382,7 +1379,8 @@ public class GigwaGa4ghServiceImpl implements GigwaMethods, VariantMethods, Refe
         if (tmpVarColl.estimatedDocumentCount() == 0) {
             return listSequences(request, sModule, projId);	// working on full dataset
         }
-        List<String> distinctSequences = tmpVarColl.distinct(VariantData.FIELDNAME_REFERENCE_POSITION + "." + ReferencePosition.FIELDNAME_SEQUENCE, String.class).into(new ArrayList<>());
+        boolean fV2Model = assemblyId.get() == null || assemblyId.get() < 0;
+        List<String> distinctSequences = tmpVarColl.distinct((!fV2Model ? AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + assemblyId.get() : AbstractVariantDataV2.FIELDNAME_REFERENCE_POSITION) + "." + ReferencePosition.FIELDNAME_SEQUENCE, String.class).into(new ArrayList<>());
         TreeSet<String> sortedResult = new TreeSet<>(new AlphaNumericComparator());
         sortedResult.addAll(distinctSequences);
         return sortedResult;

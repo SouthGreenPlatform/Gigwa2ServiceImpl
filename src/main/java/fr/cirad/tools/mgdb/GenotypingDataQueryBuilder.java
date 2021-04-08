@@ -48,6 +48,7 @@ import fr.cirad.mgdb.model.mongo.maintypes.GenotypingProject;
 import fr.cirad.mgdb.model.mongo.maintypes.GenotypingProjectV2;
 import fr.cirad.mgdb.model.mongo.maintypes.GenotypingSample;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantData;
+import fr.cirad.mgdb.model.mongo.maintypes.VariantDataV2;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunData.VariantRunDataId;
 import fr.cirad.mgdb.model.mongo.maintypes.VariantRunDataV2;
@@ -293,11 +294,15 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 		this.projectionFields = new Document();
 		if (!fForCounting)
 		{
-	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + (assemblyId != null ? assemblyId + "¤" : "") + ReferencePosition.FIELDNAME_SEQUENCE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_SEQUENCE));
-	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + (assemblyId != null ? assemblyId + "¤" : "") + ReferencePosition.FIELDNAME_START_SITE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_START_SITE));
-	        groupFields.put(VariantData.FIELDNAME_REFERENCE_POSITION + "¤" + (assemblyId != null ? assemblyId + "¤" : "") + ReferencePosition.FIELDNAME_END_SITE, new Document("$first", "$" + VariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_END_SITE));
-	        groupFields.put(VariantData.FIELDNAME_TYPE, new Document("$first", "$" + VariantData.FIELDNAME_TYPE));
-	        groupFields.put(VariantData.FIELDNAME_KNOWN_ALLELE_LIST, new Document("$first", "$" + VariantData.FIELDNAME_KNOWN_ALLELE_LIST));
+			String refPosPath = (fV2Model ? VariantDataV2.FIELDNAME_REFERENCE_POSITION : VariantData.FIELDNAME_REFERENCE_POSITION) + (!fV2Model ? "." + assemblyId : "");
+			String refPosPathForGroup = refPosPath.replaceAll("\\.", "¤");
+			String typePath = fV2Model ? VariantDataV2.FIELDNAME_TYPE : VariantData.FIELDNAME_TYPE;
+			String kaPath = fV2Model ? VariantDataV2.FIELDNAME_KNOWN_ALLELE_LIST : VariantData.FIELDNAME_KNOWN_ALLELE_LIST;
+	        groupFields.put(refPosPathForGroup/* + ReferencePosition.FIELDNAME_SEQUENCE*/, new Document("$first", "$" + refPosPath/* + "." + ReferencePosition.FIELDNAME_SEQUENCE*/));
+//	        groupFields.put(refPosPathForGroup + ReferencePosition.FIELDNAME_START_SITE, new Document("$first", "$" + refPosPath + "." + ReferencePosition.FIELDNAME_START_SITE));
+//	        groupFields.put(refPosPathForGroup + ReferencePosition.FIELDNAME_END_SITE, new Document("$first", "$" + refPosPath + "." + ReferencePosition.FIELDNAME_END_SITE));
+	        groupFields.put(typePath, new Document("$first", "$" + typePath));
+	        groupFields.put(kaPath, new Document("$first", "$" + kaPath));
 
 	        boolean fGotIndividualsWithMultipleSamples = false;
 	        for (int g : filteredGroups)
@@ -307,11 +312,11 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 						fGotIndividualsWithMultipleSamples = true;
 						break;
 					}
-			projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_SEQUENCE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + (assemblyId != null ? assemblyId + (fGotIndividualsWithMultipleSamples ? "¤" : ".") : "") + ReferencePosition.FIELDNAME_SEQUENCE);
-			projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_START_SITE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + (assemblyId != null ? assemblyId + (fGotIndividualsWithMultipleSamples ? "¤" : ".") : "") + ReferencePosition.FIELDNAME_START_SITE);
-	        projectionFields.put(AbstractVariantData.FIELDNAME_REFERENCE_POSITION + "." + (assemblyId != null ? assemblyId + "." : "") + ReferencePosition.FIELDNAME_END_SITE, "$" + VariantData.FIELDNAME_REFERENCE_POSITION + (fGotIndividualsWithMultipleSamples ? "¤" : ".") + (assemblyId != null ? assemblyId + (fGotIndividualsWithMultipleSamples ? "¤" : ".") : "") + ReferencePosition.FIELDNAME_END_SITE);
-	        projectionFields.put(AbstractVariantData.FIELDNAME_TYPE, "$" + VariantData.FIELDNAME_TYPE);
-	        projectionFields.put(AbstractVariantData.FIELDNAME_KNOWN_ALLELE_LIST, "$" + VariantData.FIELDNAME_KNOWN_ALLELE_LIST);
+			projectionFields.put(refPosPath/* + ReferencePosition.FIELDNAME_SEQUENCE*/, "$" + (fGotIndividualsWithMultipleSamples ? refPosPathForGroup : refPosPath)/* + ReferencePosition.FIELDNAME_SEQUENCE*/);
+//			projectionFields.put(refPosPath + ReferencePosition.FIELDNAME_START_SITE, "$" + (fGotIndividualsWithMultipleSamples ? refPosPathForGroup : refPosPath) + "." + ReferencePosition.FIELDNAME_START_SITE);
+//	        projectionFields.put(refPosPath + ReferencePosition.FIELDNAME_END_SITE, "$" + (fGotIndividualsWithMultipleSamples ? refPosPathForGroup : refPosPath) + "." + ReferencePosition.FIELDNAME_END_SITE);
+	        projectionFields.put(typePath, "$" + typePath);
+	        projectionFields.put(kaPath, "$" + kaPath);
 	    }
     }
 	
@@ -699,7 +704,7 @@ public class GenotypingDataQueryBuilder implements Iterator<List<BasicDBObject>>
 		                subIn.put("c" + g, new BasicDBObject("$map", new BasicDBObject("input", "$$d" + g).append("as", "d").append("in", new BasicDBObject("$size", new BasicDBObject("$filter", filter)))));
 		                
 		                addFieldsVars.put("dgc" + g, new BasicDBObject("$max", "$r.c" + g));	// dominant genotype count
-		                Object minimumDominantGenotypeCount = new BasicDBObject("$multiply", Arrays.asList(new BasicDBObject("$subtract", new Object[] {selectedIndividuals[g].size(), "$r.m" + g}), mostSameRatio[g] / 100f));
+		                Object minimumDominantGenotypeCount = new BasicDBObject("$multiply", Arrays.asList(new BasicDBObject("$subtract", new Object[] {selectedIndividuals[g].size(), "$r.m" + g}), (mostSameRatio[g] == null ? 100 : mostSameRatio[g]) / 100f));
 		                addFieldsIn.put("ed" + g, new BasicDBObject("$gte", Arrays.asList("$$dgc" + g, minimumDominantGenotypeCount)));	// flag telling whether or not we have enough dominant genotypes to reach the required ratio
 		                if (fDiscriminate && g == 1) {
 		                	BasicDBObject dominantGt0 = new BasicDBObject("$arrayElemAt", Arrays.asList("$r.d" + 0, new BasicDBObject("$indexOfArray", Arrays.asList("$r.c" + 0, "$$dgc" + 0))));
